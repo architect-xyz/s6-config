@@ -1,10 +1,11 @@
 use anyhow::{anyhow, bail, Result};
 use clap::Parser;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize};
 use std::{
     fs,
     path::{Path, PathBuf},
 };
+use std::fmt::Display;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -25,14 +26,24 @@ struct Service {
     producer_for: Option<String>,
     pipeline_name: Option<String>,
     dependencies: Option<Vec<String>>,
-    extensions: Extensions,
+    extensions: Option<Extensions>,
 }
 
-#[derive(Deserialize, Serialize)]
+#[derive(Clone, Copy, Deserialize)]
 #[serde(rename_all = "lowercase")]
 enum ServiceType {
     OneShot,
     LongRun,
+}
+
+impl Display for ServiceType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let str = match self {
+            Self::OneShot => "oneshot".to_string(),
+            Self::LongRun => "longrun".to_string(),
+        };
+        write!(f, "{}", str)
+    }
 }
 
 #[derive(Default, Deserialize)]
@@ -65,21 +76,23 @@ fn main() -> Result<()> {
             let name = path
                 .file_name()
                 .into_string()
-                .map_err(|_| anyhow!("illegal file name"))?;
+                .map_err(|_| anyhow!("illegal file name"))?
+                .trim_end_matches(".toml")
+                .to_string();
             let file = fs::read_to_string(path.path())?;
             let service: Service = toml::from_str(&file)?;
             services.push((name, service));
         }
     }
     let user_contents_dir = args.output_dir.join("user").join("contents.d");
-    fs::remove_dir_all(&user_contents_dir)?;
+    let _ = fs::remove_dir_all(&user_contents_dir);
     fs::create_dir_all(&user_contents_dir)?;
     loop {
         let mut more_services = Vec::new();
         for (name, service) in services.drain(..) {
             let service_dir = args.output_dir.join(&name);
             fs::create_dir_all(&service_dir)?;
-            fs::write(service_dir.join("type"), toml::to_string(&service.type_)?)?;
+            fs::write(service_dir.join("type"), service.type_.to_string())?;
             if let Some(ref run) = service.run {
                 fs::write(service_dir.join("run"), run)?;
             }
@@ -102,33 +115,35 @@ fn main() -> Result<()> {
                     fs::write(deps_dir.join(dep), "")?;
                 }
             }
-            if let Some(log) = service.extensions.log {
-                let pipeline_name = format!("{name}-with-logs");
-                let logger_name = format!("{name}-log");
-                if service.producer_for.is_some() {
-                    bail!("extension `log` would clobber producer-for");
-                }
-                fs::write(service_dir.join("producer-for"), &logger_name)?;
-                more_services.push((
-                    logger_name,
-                    Service {
-                        type_: ServiceType::LongRun,
-                        run: Some(log_run(&log.dir)),
-                        finish: None,
-                        consumer_for: Some(name.clone()),
-                        producer_for: None,
-                        pipeline_name: Some(pipeline_name),
-                        dependencies: service.dependencies.clone(),
-                        extensions: Extensions::default(),
-                    },
-                ));
-            }
-            if let Some(restart) = service.extensions.restart {
-                if !restart.on_failure {
-                    if service.finish.is_some() {
-                        bail!("extension `restart` would clobber finish");
+            if let Some(ref ext) = service.extensions {
+                if let Some(ref log) = ext.log {
+                    let pipeline_name = format!("{name}-with-logs");
+                    let logger_name = format!("{name}-log");
+                    if service.producer_for.is_some() {
+                        bail!("extension `log` would clobber producer-for");
                     }
-                    fs::write(service_dir.join("finish"), no_restart_on_failure())?;
+                    fs::write(service_dir.join("producer-for"), &logger_name)?;
+                    more_services.push((
+                        logger_name,
+                        Service {
+                            type_: ServiceType::LongRun,
+                            run: Some(log_run(&log.dir)),
+                            finish: None,
+                            consumer_for: Some(name.clone()),
+                            producer_for: None,
+                            pipeline_name: Some(pipeline_name),
+                            dependencies: service.dependencies.clone(),
+                            extensions: None,
+                        },
+                    ));
+                }
+                if let Some(ref restart) = ext.restart {
+                    if !restart.on_failure {
+                        if service.finish.is_some() {
+                            bail!("extension `restart` would clobber finish");
+                        }
+                        fs::write(service_dir.join("finish"), no_restart_on_failure())?;
+                    }
                 }
             }
             // only write this service to the user bundle if it's standalone,
