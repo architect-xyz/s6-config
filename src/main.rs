@@ -20,6 +20,7 @@ struct Args {
 struct Service {
     #[serde(rename = "type")]
     type_: ServiceType,
+    up: Option<String>,
     run: Option<String>,
     finish: Option<String>,
     consumer_for: Option<String>,
@@ -89,10 +90,47 @@ fn main() -> Result<()> {
     fs::create_dir_all(&user_contents_dir)?;
     loop {
         let mut more_services = Vec::new();
-        for (name, service) in services.drain(..) {
+        for (name, mut service) in services.drain(..) {
+            // process extensions first, since they can mutate the service definition
+            if let Some(ref ext) = service.extensions {
+                if let Some(ref log) = ext.log {
+                    let pipeline_name = format!("{name}-with-logs");
+                    let logger_name = format!("{name}-log");
+                    if service.producer_for.is_some() {
+                        bail!("extension `log` would clobber producer-for");
+                    }
+                    service.producer_for = Some(logger_name.clone());
+                    more_services.push((
+                        logger_name,
+                        Service {
+                            type_: ServiceType::LongRun,
+                            up: None,
+                            run: Some(log_run(&log.dir)),
+                            finish: None,
+                            consumer_for: Some(name.clone()),
+                            producer_for: None,
+                            pipeline_name: Some(pipeline_name),
+                            dependencies: service.dependencies.clone(),
+                            extensions: None,
+                        },
+                    ));
+                }
+                if let Some(ref restart) = ext.restart {
+                    if !restart.on_failure {
+                        if service.finish.is_some() {
+                            bail!("extension `restart` would clobber finish");
+                        }
+                        service.finish = Some(no_restart_on_failure());
+                    }
+                }
+            }
+            // write out service definition
             let service_dir = args.output_dir.join(&name);
             fs::create_dir_all(&service_dir)?;
             fs::write(service_dir.join("type"), service.type_.to_string())?;
+            if let Some(ref up) = service.up {
+                fs::write(service_dir.join("up"), up)?;
+            }
             if let Some(ref run) = service.run {
                 fs::write(service_dir.join("run"), run)?;
             }
@@ -113,37 +151,6 @@ fn main() -> Result<()> {
                 fs::create_dir_all(&deps_dir)?;
                 for dep in deps {
                     fs::write(deps_dir.join(dep), "")?;
-                }
-            }
-            if let Some(ref ext) = service.extensions {
-                if let Some(ref log) = ext.log {
-                    let pipeline_name = format!("{name}-with-logs");
-                    let logger_name = format!("{name}-log");
-                    if service.producer_for.is_some() {
-                        bail!("extension `log` would clobber producer-for");
-                    }
-                    fs::write(service_dir.join("producer-for"), &logger_name)?;
-                    more_services.push((
-                        logger_name,
-                        Service {
-                            type_: ServiceType::LongRun,
-                            run: Some(log_run(&log.dir)),
-                            finish: None,
-                            consumer_for: Some(name.clone()),
-                            producer_for: None,
-                            pipeline_name: Some(pipeline_name),
-                            dependencies: service.dependencies.clone(),
-                            extensions: None,
-                        },
-                    ));
-                }
-                if let Some(ref restart) = ext.restart {
-                    if !restart.on_failure {
-                        if service.finish.is_some() {
-                            bail!("extension `restart` would clobber finish");
-                        }
-                        fs::write(service_dir.join("finish"), no_restart_on_failure())?;
-                    }
                 }
             }
             // only write this service to the user bundle if it's standalone,
