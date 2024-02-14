@@ -1,11 +1,12 @@
 use anyhow::{anyhow, bail, Result};
 use clap::Parser;
-use serde::{Deserialize};
+use indoc::indoc;
+use serde::Deserialize;
 use std::{
+    fmt::Display,
     fs,
     path::{Path, PathBuf},
 };
-use std::fmt::Display;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -175,18 +176,17 @@ fn main() -> Result<()> {
 
 fn log_run(path: &Path) -> String {
     format!(
-        r#"
-#!/bin/sh
-exec logutil-service {}
-    "#,
+        indoc! {r#"
+            #!/bin/sh
+            exec logutil-service {}
+        "#},
         path.display()
     )
 }
 
 fn no_restart_on_failure() -> String {
-    r#"
-#!/bin/sh
-exit 125
-    "#
-    .to_string()
+    format!(indoc! {r#"
+        #!/bin/sh
+        exit 125
+    "#})
 }
