@@ -92,29 +92,44 @@ fn main() -> Result<()> {
     loop {
         let mut more_services = Vec::new();
         for (name, mut service) in services.drain(..) {
+            let service_dir = args.output_dir.join(&name);
+            fs::create_dir_all(&service_dir)?;
             // process extensions first, since they can mutate the service definition
             if let Some(ref ext) = service.extensions {
                 if let Some(ref log) = ext.log {
-                    let pipeline_name = format!("{name}-with-logs");
-                    let logger_name = format!("{name}-log");
-                    if service.producer_for.is_some() {
-                        bail!("extension `log` would clobber producer-for");
+                    match service.type_ {
+                        ServiceType::OneShot => {
+                            if service.up.is_some() {
+                                bail!("extension `log` would clobber up for oneshots");
+                            }
+                            service.up = Some(log_up(
+                                &log.dir,
+                                &service_dir.canonicalize()?.join("run"),
+                            ));
+                        }
+                        ServiceType::LongRun => {
+                            let pipeline_name = format!("{name}-with-logs");
+                            let logger_name = format!("{name}-log");
+                            if service.producer_for.is_some() {
+                                bail!("extension `log` would clobber producer-for");
+                            }
+                            service.producer_for = Some(logger_name.clone());
+                            more_services.push((
+                                logger_name,
+                                Service {
+                                    type_: ServiceType::LongRun,
+                                    up: None,
+                                    run: Some(log_run(&log.dir)),
+                                    finish: None,
+                                    consumer_for: Some(name.clone()),
+                                    producer_for: None,
+                                    pipeline_name: Some(pipeline_name),
+                                    dependencies: service.dependencies.clone(),
+                                    extensions: None,
+                                },
+                            ));
+                        }
                     }
-                    service.producer_for = Some(logger_name.clone());
-                    more_services.push((
-                        logger_name,
-                        Service {
-                            type_: ServiceType::LongRun,
-                            up: None,
-                            run: Some(log_run(&log.dir)),
-                            finish: None,
-                            consumer_for: Some(name.clone()),
-                            producer_for: None,
-                            pipeline_name: Some(pipeline_name),
-                            dependencies: service.dependencies.clone(),
-                            extensions: None,
-                        },
-                    ));
                 }
                 if let Some(ref restart) = ext.restart {
                     if !restart.on_failure {
@@ -126,8 +141,6 @@ fn main() -> Result<()> {
                 }
             }
             // write out service definition
-            let service_dir = args.output_dir.join(&name);
-            fs::create_dir_all(&service_dir)?;
             fs::write(service_dir.join("type"), service.type_.to_string())?;
             if let Some(ref up) = service.up {
                 fs::write(service_dir.join("up"), up)?;
@@ -181,6 +194,20 @@ fn log_run(path: &Path) -> String {
             exec logutil-service {}
         "#},
         path.display()
+    )
+}
+
+// using trick here to log oneshots: https://github.com/just-containers/s6-overlay/issues/442
+fn log_up(path: &Path, run_script: &Path) -> String {
+    format!(
+        indoc! {r#"
+            #!/command/execlineb -P
+            pipeline -w {{ logutil-service {} }}
+            fdmove -c 2 1
+            {}
+        "#},
+        path.display(),
+        run_script.display()
     )
 }
 
