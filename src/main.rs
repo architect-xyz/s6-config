@@ -7,6 +7,10 @@ use std::{
     fs,
     path::{Path, PathBuf},
 };
+use std::fs::File;
+use std::io::Write;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -146,7 +150,10 @@ fn main() -> Result<()> {
                 fs::write(service_dir.join("up"), up)?;
             }
             if let Some(ref run) = service.run {
-                fs::write(service_dir.join("run"), run)?;
+                let mut f = File::create(service_dir.join("run"))?;
+                f.write_all(run.as_ref())?;
+                #[cfg(unix)]
+                f.metadata()?.permissions().set_mode(0o755);
             }
             if let Some(ref finish) = service.finish {
                 fs::write(service_dir.join("finish"), finish)?;
