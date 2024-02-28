@@ -63,6 +63,9 @@ struct Extensions {
 #[serde(rename_all = "kebab-case")]
 struct Log {
     dir: PathBuf,
+    /// s6 logging script; cf. https://skarnet.org/software/s6/s6-log.html
+    /// s6-overlay defaults to: "n20 s1000000 T"
+    script: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -108,6 +111,7 @@ fn main() -> Result<()> {
                             }
                             service.up = Some(log_up(
                                 &log.dir,
+                                log.script.clone(),
                                 &service_dir.canonicalize()?.join("run"),
                             ));
                         }
@@ -123,7 +127,7 @@ fn main() -> Result<()> {
                                 Service {
                                     type_: ServiceType::LongRun,
                                     up: None,
-                                    run: Some(log_run(&log.dir)),
+                                    run: Some(log_run(&log.dir, log.script.clone())),
                                     finish: None,
                                     consumer_for: Some(name.clone()),
                                     producer_for: None,
@@ -194,25 +198,37 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn log_run(path: &Path) -> String {
+fn log_run(path: &Path, script: Option<String>) -> String {
+    let script = match script {
+        Some(s) => format!("export S6_LOGGING_SCRIPT \"{s}\""),
+        None => "".to_string(),
+    };
     format!(
         indoc! {r#"
             #!/bin/sh
+            {}
             exec logutil-service {}
         "#},
+        script,
         path.display()
     )
 }
 
 // using trick here to log oneshots: https://github.com/just-containers/s6-overlay/issues/442
-fn log_up(path: &Path, run_script: &Path) -> String {
+fn log_up(path: &Path, log_script: Option<String>, run_script: &Path) -> String {
+    let log_script = match log_script {
+        Some(s) => format!("export S6_LOGGING_SCRIPT \"{s}\""),
+        None => "".to_string(),
+    };
     format!(
         indoc! {r#"
             #!/command/execlineb -P
+            {}
             pipeline -w {{ logutil-service {} }}
             fdmove -c 2 1
             {}
         "#},
+        log_script,
         path.display(),
         run_script.display()
     )
