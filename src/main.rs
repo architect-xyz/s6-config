@@ -200,7 +200,7 @@ fn main() -> Result<()> {
 
 fn log_run(path: &Path, script: Option<String>) -> String {
     let script = match script {
-        Some(s) => format!("export S6_LOGGING_SCRIPT \"{s}\""),
+        Some(s) => format!("export S6_LOGGING_SCRIPT=\"{s}\""),
         None => "".to_string(),
     };
     format!(
