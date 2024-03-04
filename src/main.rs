@@ -5,6 +5,7 @@ use serde::Deserialize;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 use std::{
+    collections::{HashMap, HashSet},
     fmt::Display,
     fs,
     fs::{File, Permissions},
@@ -18,6 +19,10 @@ struct Args {
     input_dir: PathBuf,
     #[arg(short, long)]
     output_dir: PathBuf,
+    /// If set, only the services specified here, and their transitive dependencies,
+    /// will be included in the output.
+    #[arg(long, value_delimiter = ',')]
+    services_enabled: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -87,15 +92,24 @@ fn main() -> Result<()> {
                 .to_string();
             let file = fs::read_to_string(path.path())?;
             let service: Service = toml::from_str(&file)?;
-            services.push((name, service));
+            services.push((name, service, false));
         }
     }
+    let services_enabled = {
+        let service_map: HashMap<String, &Service> =
+            services.iter().map(|(name, service, _)| (name.clone(), service)).collect();
+        transitive_closure(service_map, args.services_enabled.clone())
+    };
     let user_contents_dir = args.output_dir.join("user").join("contents.d");
     let _ = fs::remove_dir_all(&user_contents_dir);
     fs::create_dir_all(&user_contents_dir)?;
     loop {
         let mut more_services = Vec::new();
-        for (name, mut service) in services.drain(..) {
+        for (name, mut service, derived) in services.drain(..) {
+            if !services_enabled.contains(&name) && !derived {
+                println!("skipping {name} because it's not enabled");
+                continue;
+            }
             let service_dir = args.output_dir.join(&name);
             fs::create_dir_all(&service_dir)?;
             // process extensions first, since they can mutate the service definition
@@ -131,6 +145,7 @@ fn main() -> Result<()> {
                                     dependencies: service.dependencies.clone(),
                                     extensions: None,
                                 },
+                                true,
                             ));
                         }
                     }
@@ -223,4 +238,26 @@ fn no_restart_on_failure() -> String {
         #!/bin/sh
         exit 125
     "#})
+}
+
+fn transitive_closure(
+    services: HashMap<String, &Service>,
+    enabled: Option<Vec<String>>,
+) -> Vec<String> {
+    let mut res = vec![];
+    let mut visited = HashSet::new();
+    let mut to_visit = enabled.unwrap_or_else(|| services.keys().cloned().collect());
+    while let Some(name) = to_visit.pop() {
+        if visited.contains(&name) {
+            continue;
+        }
+        visited.insert(name.clone());
+        res.push(name.clone());
+        if let Some(service) = services.get(&name) {
+            if let Some(deps) = &service.dependencies {
+                to_visit.extend(deps.clone());
+            }
+        }
+    }
+    res
 }
