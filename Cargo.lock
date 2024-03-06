@@ -161,7 +161,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "s7"
+name = "s6-config"
 version = "0.1.0"
 dependencies = [
  "anyhow",
