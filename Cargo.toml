@@ -2,6 +2,7 @@
 authors = ["Architect Financial Technologies <hello@architect.xyz>"]
 categories = ["command-line-utilities"]
 keywords = ["s6", "s6-rc", "supervision", "systemd"]
+repository = "https://github.com/architect-xyz/s7"
 license = "MIT"
 name = "s7"
 version = "0.1.0"
