@@ -1,4 +1,8 @@
 [package]
+authors = ["Architect Financial Technologies <hello@architect.xyz>"]
+categories = ["command-line-utilities"]
+keywords = ["s6", "s6-rc", "supervision", "systemd"]
+license = "MIT"
 name = "s7"
 version = "0.1.0"
 edition = "2021"
