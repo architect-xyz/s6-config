@@ -19,6 +19,10 @@ struct Args {
     input_dir: PathBuf,
     #[arg(short, long)]
     output_dir: PathBuf,
+    /// Integration with logterm (https://github.com/architect-xyz/logterm);
+    /// output logterm config to the given file
+    #[arg(long)]
+    output_logterm_config: Option<PathBuf>,
     /// If set, only the services specified here, and their transitive dependencies,
     /// will be included in the output.
     #[arg(long, value_delimiter = ',')]
@@ -100,6 +104,7 @@ fn main() -> Result<()> {
             services.iter().map(|(name, service, _)| (name.clone(), service)).collect();
         transitive_closure(service_map, args.services_enabled.clone())
     };
+    let mut service_logs: HashMap<String, PathBuf> = HashMap::new();
     let user_contents_dir = args.output_dir.join("user").join("contents.d");
     let _ = fs::remove_dir_all(&user_contents_dir);
     fs::create_dir_all(&user_contents_dir)?;
@@ -115,6 +120,7 @@ fn main() -> Result<()> {
             // process extensions first, since they can mutate the service definition
             if let Some(ref ext) = service.extensions {
                 if let Some(ref log) = ext.log {
+                    service_logs.insert(name.clone(), log.dir.clone().into());
                     match service.type_ {
                         ServiceType::OneShot => {
                             if service.up.is_some() {
@@ -206,6 +212,11 @@ fn main() -> Result<()> {
         }
         services = more_services;
     }
+    if let Some(output_logterm_config) = args.output_logterm_config {
+        println!("writing logterm config to {}", output_logterm_config.display());
+        fs::create_dir_all(output_logterm_config.parent().unwrap())?;
+        fs::write(output_logterm_config, logterm_config(service_logs))?;
+    }
     Ok(())
 }
 
@@ -259,5 +270,16 @@ fn transitive_closure(
             }
         }
     }
+    res
+}
+
+fn logterm_config(mut service_logs: HashMap<String, PathBuf>) -> String {
+    let mut res = String::new();
+    res.push_str("logsets:\n");
+    for (name, mut path) in service_logs.drain() {
+        path.push("current");
+        res.push_str(&format!("  {name}: {}\n", path.display()));
+    }
+    res.push_str("\n");
     res
 }
