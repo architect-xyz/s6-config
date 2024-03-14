@@ -102,6 +102,14 @@ fn main() -> Result<()> {
     let services_enabled = {
         let service_map: HashMap<String, &Service> =
             services.iter().map(|(name, service, _)| (name.clone(), service)).collect();
+        if let Some(enabled) = &args.services_enabled {
+            // check that every service asked for explicitly actually exists
+            for service in enabled.iter() {
+                if !service_map.contains_key(service) {
+                    bail!("service {} not found but was specified in --services-enabled", service);
+                }
+            }
+        }
         transitive_closure(service_map, args.services_enabled.clone())
     };
     let mut service_logs: HashMap<String, PathBuf> = HashMap::new();

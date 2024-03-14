@@ -6,7 +6,7 @@ repository = "https://github.com/architect-xyz/s6-config"
 documentation = "https://docs.rs/s6-config"
 license = "MIT"
 name = "s6-config"
-version = "0.1.2"
+version = "0.1.3"
 edition = "2021"
 description = "simple configuration tool for s6"
 
